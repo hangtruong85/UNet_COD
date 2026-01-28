@@ -1,62 +1,36 @@
 """
 Models package for Camouflaged Object Detection
+
+Architectures:
+  - UNet:    Standard encoder-decoder with skip connections
+  - UNetPP:  UNet++ with nested dense skip connections
+  - UNet3Plus: UNet3+ with full-scale skip connections
+
+Each architecture has:
+  - Baseline variant (EfficientNet-B3 encoder)
+  - BEM variant (+ Boundary Enhancement Module)
 """
 
-# Import modules
-from .deformable_conv import DCNv1Module, DCNv2Module, DCNv3Module, DCNv4Module
-from .cbam import CBAM, CBAMBlock, ChannelAttention, SpatialAttention
 from .boundary_enhancement import BoundaryEnhancementModule
 
-# Import baseline models
-from .unetpp_bem import (
-    UNetPP,
-    UNetPP_B3,
-    UNetPP_DCNv1_COD,
-    UNetPP_DCNv2_COD,
-    UNetPP_DCNv3_COD,
-    UNetPP_DCNv4_COD
-)
+# UNet models
+from .unet import UNet, UNet_B3, UNet_BEM
 
-# Import UNet3+ models
-from .unet3plus_dcn import (
-    UNet3Plus_B3,
-    UNet3Plus_DCNv1_COD,
-    UNet3Plus_DCNv2_COD,
-    UNet3Plus_DCNv3_COD,
-    UNet3Plus_DCNv4_COD
-)
+# UNet++ models
+from .unetpp import UNetPP, UNetPP_B3, UNetPP_BEM
 
-# Import new models with DCN + CBAM + BEM
-from .unetpp_dcn_cbam import (
-    UNetPP_DCN_CBAM_BEM,
-    UNetPP_DCNv1_CBAM_BEM,
-    UNetPP_DCNv2_CBAM_BEM,
-    UNetPP_DCNv3_CBAM_BEM,
-    UNetPP_DCNv4_CBAM_BEM,
-    UNetPP_CBAM,
-    UNetPP_DCN_BEM,
-    UNetPP_BEM
-)
+# UNet3+ models
+from .unet3plus import UNet3Plus, UNet3Plus_B3, UNet3Plus_BEM
 
 __all__ = [
-    # Modules
-    'DCNv1Module', 'DCNv2Module', 'DCNv3Module', 'DCNv4Module',
-    'CBAM', 'CBAMBlock', 'ChannelAttention', 'SpatialAttention',
     'BoundaryEnhancementModule',
-    
-    # UNet++ baseline
-    'UNetPP', 'UNetPP_B3',
-    'UNetPP_DCNv1_COD', 'UNetPP_DCNv2_COD', 
-    'UNetPP_DCNv3_COD', 'UNetPP_DCNv4_COD',
-    
+
+    # UNet
+    'UNet', 'UNet_B3', 'UNet_BEM',
+
+    # UNet++
+    'UNetPP', 'UNetPP_B3', 'UNetPP_BEM',
+
     # UNet3+
-    'UNet3Plus_B3',
-    'UNet3Plus_DCNv1_COD', 'UNet3Plus_DCNv2_COD',
-    'UNet3Plus_DCNv3_COD', 'UNet3Plus_DCNv4_COD',
-    
-    # New models
-    'UNetPP_DCN_CBAM_BEM',
-    'UNetPP_DCNv1_CBAM_BEM', 'UNetPP_DCNv2_CBAM_BEM',
-    'UNetPP_DCNv3_CBAM_BEM', 'UNetPP_DCNv4_CBAM_BEM',
-    'UNetPP_CBAM', 'UNetPP_DCN_BEM', 'UNetPP_BEM'
+    'UNet3Plus', 'UNet3Plus_B3', 'UNet3Plus_BEM',
 ]
