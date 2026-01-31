@@ -37,8 +37,9 @@ from models.unet3plus import (
 from metrics.s_measure_paper import s_measure
 from metrics.e_measure_paper import e_measure
 from metrics.fweighted_measure import fw_measure
+from metrics.mae_metric import mae_metric
 from utils.logger import setup_logger
-from loss.losses import FocalLoss, SegmentationLoss, mae_metric
+from loss.losses import SegmentationLoss
 
 
 # ===================== Configuration =====================
