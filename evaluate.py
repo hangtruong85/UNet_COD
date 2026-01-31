@@ -28,9 +28,7 @@ from models.unet3plus import (
     UNet3Plus_B3,
     UNet3Plus_B4,
     UNet3Plus_B5,
-    UNet3Plus_B3_BEM,
-    UNet3Plus_PVT_V2_B1,
-    UNet3Plus_PVT_V2_B2
+    UNet3Plus_B3_BEM
 )
 from metrics.s_measure_paper import s_measure
 from metrics.e_measure_paper import e_measure
@@ -46,10 +44,10 @@ class EvalConfig:
     """Evaluation configuration"""
     def __init__(self):
         # Model to evaluate
-        self.model_name = "UNet3Plus_PVT_V2_B1"
+        self.model_name = "UNet3Plus_PVT_V2_B2"
         
         # Checkpoint path
-        self.ckpt_path = "logs/UNet3Plus_PVT_V2_B1_20260130_111854/best_s_measure.pth"
+        self.ckpt_path = "logs/UNet3Plus_PVT_V2_B2_20260130_111937/best_s_measure.pth"
         
         # Dataset
         self.root = "../MHCD_seg"

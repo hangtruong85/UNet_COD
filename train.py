@@ -32,15 +32,13 @@ from models.unet3plus import (
     UNet3Plus_B3,
     UNet3Plus_B4,
     UNet3Plus_B5,
-    UNet3Plus_B3_BEM,
-    UNet3Plus_PVT_V2_B1,
-    UNet3Plus_PVT_V2_B2,
-    UNet3Plus_PVT_V2_B3
+    UNet3Plus_B3_BEM
 )
 from metrics.s_measure_paper import s_measure
 from metrics.e_measure_paper import e_measure
 from metrics.fweighted_measure import fw_measure
 from logger_utils import setup_logger
+from loss.losses import FocalLoss, SegmentationLoss, mae_metric
 
 
 # ===================== Configuration =====================
@@ -48,28 +46,27 @@ from logger_utils import setup_logger
 class Config:
     """Centralized configuration for training"""
     def __init__(self):
-        # Model selection - now with DCN + CBAM + BEM variants!
-        self.model_name = "UNet3Plus_PVT_V2_B2"  # New full model
+        # Model selection
+        self.model_name = "UNet3Plus_B3"
         
         # Dataset
         self.root = "../MHCD_seg"
-        self.img_size = 352  # Increased from 256 - better for COD
+        self.img_size = 352
         
         # Training
         self.epochs = 120
-        self.batch_size = 12  # Reduced due to larger image size
+        self.batch_size = 12
         self.num_workers = 4
         
         # Optimizer
-        self.lr_encoder = 1e-5  # Lower LR for pretrained encoder
-        self.lr_dcn = 1e-4      # Higher LR for DCN modules
+        self.lr = 1e-4
         self.weight_decay = 1e-4
 
         # Loss weights
         self.lambda_bce = 0.0
         self.lambda_dice = 0.4
         self.lambda_iou = 0.0
-        self.lambda_focal = 0.4  # NEW: Focal loss weight
+        self.lambda_focal = 0.4  
         self.lambda_boundary = 0.3
         
         if "BEM" in self.model_name:
@@ -86,12 +83,11 @@ class Config:
             self.lambda_iou = 0.5
         
         # Focal loss parameters
-        self.focal_alpha = 0.25  # Weight for positive class
-        self.focal_gamma = 2.0   # Focusing parameter
+        self.focal_alpha = 0.25
+        self.focal_gamma = 2.0
         
         # Training strategy
-        self.warmup_epochs = 0  # Freeze encoder for first N epochs
-        self.warmup_boundary_epochs = 30  # No boundary loss for first N epochs (stabilize segmentation first)
+        self.warmup_boundary_epochs = 30  # No boundary loss for first N epochs
         self.use_cosine_schedule = True
         
         # Device
@@ -102,154 +98,6 @@ class Config:
         os.makedirs(self.log_dir, exist_ok=True)
 
 
-# ===================== Boundary Extraction =====================
-
-# ===================== Boundary Extraction (REMOVED) =====================
-# BoundaryEnhancementModule đã được tích hợp trong model
-# Models hiện tại chỉ return mask prediction, không có boundary prediction branch
-# Nên không cần extract_boundary() function ở đây
-
-
-# ===================== Loss Functions =====================
-
-class FocalLoss(nn.Module):
-    """
-    Focal Loss for binary segmentation
-    Reference: Lin et al. "Focal Loss for Dense Object Detection" (ICCV 2017)
-    
-    FL(p_t) = -alpha_t * (1 - p_t)^gamma * log(p_t)
-    
-    Args:
-        alpha: Weight for positive class (default: 0.25)
-        gamma: Focusing parameter (default: 2.0)
-               gamma=0 -> equivalent to BCE
-               gamma>0 -> down-weights easy examples
-    """
-    def __init__(self, alpha=0.25, gamma=2.0):
-        super().__init__()
-        self.alpha = alpha
-        self.gamma = gamma
-    
-    def forward(self, pred, target):
-        """
-        Args:
-            pred: Predicted logits (B, 1, H, W)
-            target: Ground truth (B, 1, H, W), values in [0, 1]
-        """
-        # Get probabilities
-        pred_prob = torch.sigmoid(pred)
-        
-        # Calculate p_t
-        # p_t = p if y=1, else 1-p
-        p_t = pred_prob * target + (1 - pred_prob) * (1 - target)
-        
-        # Calculate alpha_t
-        # alpha_t = alpha if y=1, else 1-alpha
-        alpha_t = self.alpha * target + (1 - self.alpha) * (1 - target)
-        
-        # Calculate focal weight
-        focal_weight = alpha_t * torch.pow((1 - p_t), self.gamma)
-        
-        # Calculate BCE loss
-        bce_loss = F.binary_cross_entropy_with_logits(
-            pred, target, reduction='none'
-        )
-        
-        # Apply focal weight
-        focal_loss = focal_weight * bce_loss
-        
-        return focal_loss.mean()
-
-
-class SegmentationLoss(nn.Module):
-    """
-    Combined loss for camouflaged object detection
-    Includes: BCE + Dice + IoU + Focal + Boundary loss
-    """
-    def __init__(self, lambda_bce=1.0, lambda_dice=1.0, lambda_iou=0.5, 
-                 lambda_focal=1.0, lambda_boundary=0.3,
-                 focal_alpha=0.25, focal_gamma=2.0):
-        super().__init__()
-        self.lambda_bce = lambda_bce
-        self.lambda_dice = lambda_dice
-        self.lambda_iou = lambda_iou
-        self.lambda_focal = lambda_focal
-        self.lambda_boundary = lambda_boundary
-        
-        self.bce = nn.BCEWithLogitsLoss()
-        self.focal = FocalLoss(alpha=focal_alpha, gamma=focal_gamma)
-    
-    def dice_loss(self, pred, target):
-        """Dice loss for binary segmentation"""
-        pred_prob = torch.sigmoid(pred)
-        smooth = 1e-7
-        
-        intersection = (pred_prob * target).sum()
-        union = pred_prob.sum() + target.sum()
-        
-        dice = (2. * intersection + smooth) / (union + smooth)
-        return 1 - dice
-    
-    def iou_loss(self, pred, target):
-        """IoU loss"""
-        pred_prob = torch.sigmoid(pred)
-        smooth = 1e-7
-        
-        intersection = (pred_prob * target).sum()
-        union = pred_prob.sum() + target.sum() - intersection
-        
-        iou = (intersection + smooth) / (union + smooth)
-        return 1 - iou
-    
-    def boundary_loss(self, boundary_pred, boundary_target):
-        """
-        Boundary loss (L1 + BCE)
-        Args:
-            boundary_pred: predicted boundary logits (B, 1, H, W)
-            boundary_target: ground truth boundary map (B, 1, H, W)
-        """
-        # L1 loss on probability space
-        pred_prob = torch.sigmoid(boundary_pred)
-        l1_loss = F.l1_loss(pred_prob, boundary_target)
-        
-        # BCE loss
-        bce_loss = F.binary_cross_entropy_with_logits(boundary_pred, boundary_target)
-        
-        return l1_loss + bce_loss
-    
-    def forward(self, pred, target, boundary_pred=None, boundary_target=None):
-        """
-        Args:
-            pred: predicted mask logits (B, 1, H, W)
-            target: ground truth mask (B, 1, H, W)
-            boundary_pred: predicted boundary logits (B, 1, H, W) - optional
-            boundary_target: ground truth boundary (B, 1, H, W) - optional
-        """
-        # Main segmentation losses
-        loss_bce = self.bce(pred, target)
-        loss_dice = self.dice_loss(pred, target)
-        loss_iou = self.iou_loss(pred, target)
-        loss_focal = self.focal(pred, target)
-        
-        total_loss = (self.lambda_bce * loss_bce + 
-                     self.lambda_dice * loss_dice + 
-                     self.lambda_iou * loss_iou +
-                     self.lambda_focal * loss_focal)
-        
-        # Add boundary loss if provided
-        if boundary_pred is not None and boundary_target is not None:
-            loss_boundary = self.boundary_loss(boundary_pred, boundary_target)
-            total_loss += self.lambda_boundary * loss_boundary
-        
-        return total_loss
-
-
-def mae_metric(pred, target):
-    """Mean Absolute Error metric"""
-    pred_prob = torch.sigmoid(pred)
-    return torch.mean(torch.abs(pred_prob - target))
-
-
 # ===================== Training Functions =====================
 
 def train_epoch(model, loader, optimizer, criterion, scaler, device, config, epoch):
@@ -257,21 +105,10 @@ def train_epoch(model, loader, optimizer, criterion, scaler, device, config, epo
     Train for one epoch
     
     Training strategy:
-    - Epoch 1-warmup_epochs: Freeze encoder
     - Epoch 1-warmup_boundary_epochs: No boundary loss (focus on segmentation)
     - Epoch warmup_boundary_epochs+: Full training with boundary loss
     """
     model.train()
-    
-    # Freeze encoder during warmup
-    if epoch <= config.warmup_epochs:
-        if hasattr(model, 'backbone') and hasattr(model.backbone, 'encoder'):
-            for param in model.backbone.encoder.parameters():
-                param.requires_grad = False
-    else:
-        if hasattr(model, 'backbone') and hasattr(model.backbone, 'encoder'):
-            for param in model.backbone.encoder.parameters():
-                param.requires_grad = True
     
     total_loss = 0.0
     num_batches = 0
@@ -329,10 +166,10 @@ def validate(model, loader, criterion, device):
     
     metrics = {
         "loss": 0.0,
-        "S": 0.0,     # S-measure
-        "E": 0.0,     # E-measure
-        "Fw": 0.0,     # F-measure
-        "MAE": 0.0    # Mean Absolute Error
+        "S": 0.0,
+        "E": 0.0,
+        "Fw": 0.0,
+        "MAE": 0.0
     }
     
     num_samples = 0
@@ -439,15 +276,17 @@ def create_model(model_name, device):
     Create model based on name
     """
     model_dict = {     
-        # UNet++ with CBAM and BEM
+        # UNet++ with BEM
         "UNetPP": UNetPP,
         "UNetPP_B3": UNetPP_B3,
         "UNetPP_Resnet50": UNetPP_Resnet50,
         "UNetPP_B3_BEM": UNetPP_B3_BEM,
+        # UNet with BEM
         "UNet": UNet,
         "UNet_B3": UNet_B3,
         "UNet_Resnet50": UNet_Resnet50,
         "UNet_B3_BEM": UNet_B3_BEM,
+        # UNet3+ with BEM
         "UNet3Plus": UNet3Plus, 
         "UNet3Plus_ResNet50": UNet3Plus_ResNet50,
         "UNet3Plus_B0": UNet3Plus_B0,
@@ -457,9 +296,6 @@ def create_model(model_name, device):
         "UNet3Plus_B4": UNet3Plus_B4,
         "UNet3Plus_B5": UNet3Plus_B5,
         "UNet3Plus_B3_BEM": UNet3Plus_B3_BEM,
-        "UNet3Plus_PVT_V2_B1": UNet3Plus_PVT_V2_B1,
-        "UNet3Plus_PVT_V2_B2": UNet3Plus_PVT_V2_B2,
-        "UNet3Plus_PVT_V2_B3": UNet3Plus_PVT_V2_B3
     }
     
     if model_name not in model_dict:
@@ -473,66 +309,18 @@ def create_model(model_name, device):
 
 def create_optimizer(model, config):
     """
-    Create optimizer with different learning rates for different parts
+    Create optimizer with uniform learning rate
     """
-    # Separate encoder, DCN, CBAM, and other parameters
-    encoder_params = []
-    dcn_params = []
-    cbam_params = []
-    other_params = []
-    
-    for name, param in model.named_parameters():
-        if not param.requires_grad:
-            continue
-        
-        if 'backbone.encoder' in name:
-            encoder_params.append(param)
-        elif 'dcn' in name.lower():
-            dcn_params.append(param)
-        elif 'cbam' in name.lower() or 'channel_attention' in name or 'spatial_attention' in name:
-            cbam_params.append(param)
-        else:
-            other_params.append(param)
-    
-    # Create parameter groups
-    param_groups = []
-    
-    if encoder_params:
-        param_groups.append({
-            'params': encoder_params,
-            'lr': config.lr_encoder,
-            'name': 'encoder'
-        })
-        print(f"  Encoder params: {len(encoder_params)} tensors, LR={config.lr_encoder}")
-    
-    if dcn_params:
-        param_groups.append({
-            'params': dcn_params,
-            'lr': config.lr_dcn,
-            'name': 'dcn'
-        })
-        print(f"  DCN params: {len(dcn_params)} tensors, LR={config.lr_dcn}")
-    
-    if cbam_params:
-        param_groups.append({
-            'params': cbam_params,
-            'lr': config.lr_dcn,  # Same as DCN
-            'name': 'cbam'
-        })
-        print(f"  CBAM params: {len(cbam_params)} tensors, LR={config.lr_dcn}")
-    
-    if other_params:
-        param_groups.append({
-            'params': other_params,
-            'lr': config.lr_dcn,
-            'name': 'other'
-        })
-        print(f"  Other params: {len(other_params)} tensors, LR={config.lr_dcn}")
-    
     optimizer = torch.optim.AdamW(
-        param_groups,
+        model.parameters(),
+        lr=config.lr,
         weight_decay=config.weight_decay
     )
+    
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"  Total parameters    : {total_params:,}")
+    print(f"  Trainable parameters: {trainable_params:,}")
     
     return optimizer
 
@@ -576,10 +364,9 @@ def main():
     logger.info(f"Image Size    : {config.img_size}")
     logger.info(f"Batch Size    : {config.batch_size}")
     logger.info(f"Epochs        : {config.epochs}")
-    logger.info(f"Warmup Epochs : {config.warmup_epochs}")
     logger.info(f"Warmup Boundary Epochs: {config.warmup_boundary_epochs}")
-    logger.info(f"LR Encoder    : {config.lr_encoder}")
-    logger.info(f"LR DCN        : {config.lr_dcn}")
+    logger.info(f"Learning Rate : {config.lr}")
+    logger.info(f"Weight Decay  : {config.weight_decay}")
     logger.info(f"Loss Weights  : BCE={config.lambda_bce}, Dice={config.lambda_dice}, "
                 f"IoU={config.lambda_iou}, Focal={config.lambda_focal}, Boundary={config.lambda_boundary}")
     logger.info(f"Focal Params  : alpha={config.focal_alpha}, gamma={config.focal_gamma}")
@@ -676,10 +463,6 @@ def main():
         logger.info(f"\n{'='*80}")
         logger.info(f"EPOCH {epoch}/{config.epochs}")
         logger.info(f"{'='*80}")
-        
-        # Training phase
-        if epoch <= config.warmup_epochs:
-            logger.info(f"[WARMUP] Encoder frozen, training DCN modules only")
         
         train_loss = train_epoch(model, train_loader, optimizer, criterion, scaler, config.device, config, epoch)
         train_losses.append(train_loss)

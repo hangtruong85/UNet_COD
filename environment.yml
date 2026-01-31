@@ -1,4 +1,4 @@
-name: unetpp-bem-camo
+name: unetcod
 channels:
   - pytorch
   - nvidia
